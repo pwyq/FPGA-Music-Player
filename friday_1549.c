@@ -150,7 +150,7 @@ int normal_mono = 0;	// mono
 FILE *disp;
 
 int song_total_size;
-int buff_size = 1024;
+int buff_size = 512;
 int song_num = 0;
 
 int debounce_flag = 0;
@@ -345,6 +345,7 @@ void init_display()
 }
 void display_info(char* status)
 {
+	usleep(2000);
 	fprintf(disp, "#%d %s\n", current_index+1, song_list[current_index]);
 	fprintf(disp, "%s\n", status);
 }
@@ -495,11 +496,9 @@ int main(void)
     current_index = 0;
     song_index();
 
-//    lcd_display();
     init_display();
     display_info("STOP");
     mode = STOP;
-//	lcd_text2("STOP ");
     // our code
 
     IOWR(SEVEN_SEG_PIO_BASE,1,0x0007);
@@ -524,7 +523,7 @@ int main(void)
     int step;
     for (;;) {
     	determine_mode();
-    	memset(Buff, 0, sizeof(Buff));		// clear array
+//    	memset(Buff, 0, sizeof(Buff));		// clear array
     	while (song_total_size) {
     		if ((uint32_t) song_total_size >= buff_size) {
     			song_total_size -= buff_size;
@@ -572,6 +571,7 @@ int main(void)
     	}
     	// one song done playing
     	mode = STOP;
+    	display_info("STOP");
     	put_rc(f_open(&File1, song_list[current_index], 1));
     	song_total_size = song_size[current_index];
     }
