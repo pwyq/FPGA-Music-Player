@@ -212,12 +212,12 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 	xprintf("button interrupts called.\n");
 //	int buttons = 0x0;
 
-//	usleep(15000);		// 1000 microsecond
+	usleep(15000);		// 1000 microsecond
 
 	/*
 	 * push is 0, not push is 1, e.g:
 	 */
-	if (debounce_flag) {
+	if (1) {
 		switch(IORD(BUTTON_PIO_BASE, 0) &0xf) {
 			case 0x7:
 				xprintf("==== BACK ====\n");
