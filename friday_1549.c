@@ -49,11 +49,6 @@ static void song_index();
 static void init_button_pio();
 static void init_disk();
 
-//static void LCD_Init();
-//static void LCD_Line2();
-//void lcd_text(char* Text);
-//void lcd_text2(char* Text);
-
 void_init_display();
 void display_info();
 
@@ -157,7 +152,6 @@ FILE *disp;
 int song_total_size;
 int buff_size = 1024;
 int song_num = 0;
-char* curr_song_name;
 
 int debounce_flag = 0;
 
@@ -217,7 +211,7 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 	xprintf("button interrupts called.\n");
 //	int buttons = 0x0;
 
-//	usleep(15000);		// 1000 microsecond
+	usleep(15000);		// 1000 microsecond
 
 	/*
 	 * push is 0, not push is 1, e.g:
@@ -232,7 +226,6 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 				// TODO
 				xprintf("==== STOP ====\n");
 				mode = STOP;
-//				lcd_text2("STOP ");
 				display_info("STOP");
 				put_rc(f_open(&File1, song_list[current_index], 1));
 				song_total_size = song_size[current_index];
@@ -243,7 +236,6 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 					xprintf("==== PLAY ====\n");
 					// if is stopping, then play mode
 					mode = PLAY;
-//					lcd_text2("PLAY ");
 					display_info("PLAY");
 				}
 				// 2: play
@@ -251,7 +243,6 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 					xprintf("==== PAUSE ====\n");
 					// if is playing, then pause mode
 					mode = PAUSE;
-//					lcd_text2("PAUSE");
 					display_info("PAUSE");
 				}
 				break;
@@ -265,19 +256,13 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 				if (mode == 2) {
 					// keep playing
 					mode = PLAY;
-//					lcd_text2("PLAY ");
 					display_info("PLAY");
 				}
 				else {
-					char buffer[20];
 					put_rc(f_open(&File1, song_list[current_index], 1));
 					song_total_size = song_size[current_index];
-//					curr_song_name = song_list[current_index];
-//					sprintf(buffer, "%d %s", current_index, curr_song_name);
-//					lcd_text(buffer);
 					mode = STOP;
 					display_info("STOP");
-//					lcd_text2("STOP ");
 				}
 				break;
 			default:
@@ -294,11 +279,8 @@ static void handle_button_interrupts(void* context, alt_u32 id) {
 }
 
 static void init_disk() {
-//	xputs("Initialize disk...\n");
 	xprintf("rc=%d\n", (uint16_t) disk_initialize((uint8_t) 0));		// "di 0"
 	put_rc(f_mount((uint8_t) 0, &Fatfs[0]));							// "fi 0"
-//	xputs("End init..\n");
-	// TODO: error checking
 }
 
 /* Determine if the file is a .wav file */
@@ -366,56 +348,6 @@ void display_info(char* status)
 	fprintf(disp, "#%d %s\n", current_index+1, song_list[current_index]);
 	fprintf(disp, "%s\n", status);
 }
-//
-//static void LCD_Init() {
-//	IOWR(LCD_DISPLAY_BASE, 0, 0x38);
-//	usleep(2000);
-//	IOWR(LCD_DISPLAY_BASE, 0, 0x0C);
-//	usleep(2000);
-//	IOWR(LCD_DISPLAY_BASE, 0, 0x01);
-//	usleep(2000);
-//	IOWR(LCD_DISPLAY_BASE, 0, 0x06);
-//	usleep(2000);
-//	IOWR(LCD_DISPLAY_BASE, 0, 0x80);
-//	usleep(2000);
-//}
-//
-//static void LCD_Line2() {
-//	IOWR(LCD_DISPLAY_BASE, 0, 0xC0);
-//	usleep(2000);
-//}
-//
-//void lcd_text(char* Text) {
-//	int i;
-//	LCD_Init();
-//	for(i=0;i<strlen(Text);i++)
-//	{
-//		IOWR(LCD_DISPLAY_BASE, 2, Text[i]);
-//		usleep(2000);
-//	}
-//}
-//
-//void lcd_text2(char* Text) {
-//	int i;
-//	LCD_Line2();
-//	for(i=0;i<strlen(Text);i++)
-//	{
-//		IOWR(LCD_DISPLAY_BASE, 2, Text[i]);
-//		usleep(2000);
-//	}
-//}
-
-//static void lcd_display() {
-////	xputs("enter lcd display.\n");
-//	char *first_track;
-//	char buffer[20];
-////	LCD_Init();
-////	first_track = song_list[0];
-////	sprintf(buffer, "0 %s", first_track);
-////	lcd_text(buffer);
-//	display_info();
-////	xputs("leave lcd display.\n");
-//}
 
 /* Initialize the button_pio. */
 static void init_button_pio() {
@@ -492,7 +424,6 @@ static FRESULT scan_files(char *path)
     return res;
 }
 
-//                put_rc(f_mount((uint8_t) p1, &Fatfs[p1]));
 
 static void put_rc(FRESULT rc)
 {
@@ -548,11 +479,6 @@ int main(void)
     uint32_t ofs = 0, sect = 0, blk[2];
     FATFS *fs;                  /* Pointer to file system object */
 
-    // change following to global
-//    alt_up_audio_dev * audio_dev;
-//    /* used for audio record/playback */
-//    unsigned int l_buf;
-//    unsigned int r_buf;
     // open the Audio port
     audio_dev = alt_up_audio_open_dev ("/dev/Audio");
     if ( audio_dev == NULL)
@@ -646,7 +572,6 @@ int main(void)
     	}
     	// one song done playing
     	mode = STOP;
-//    	lcd_text2("STOP ");
     	put_rc(f_open(&File1, song_list[current_index], 1));
     	song_total_size = song_size[current_index];
     }
