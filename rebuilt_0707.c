@@ -5,32 +5,36 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+
 #include <system.h>
 #include <sys/alt_alarm.h>
+#include "sys/alt_irq.h"
 #include <io.h>
+
 #include "fatfs.h"
 #include "diskio.h"
 #include "ff.h"
 #include "monitor.h"
 #include "uart.h"
 #include "alt_types.h"
+
 #include <altera_up_avalon_audio.h>
 #include <altera_up_avalon_audio_and_video_config.h>
-#include "sys/alt_irq.h"
-#include <stdio.h>
 
+#include "altera_avalon_pio_regs.h"
 FILINFO Finfo;
-FATFS Fatfs[_VOLUMES];
-FIL File1;
+FATFS Fatfs[_VOLUMES];			/* File system object for each logical drive */
+FIL File1;						/* File objects */
 FILE *disp;
-DIR Dir;
-uint8_t Buff[8192] __attribute__ ((aligned(4)));
+DIR Dir;						/* Directory object */
+uint8_t Buff[8192] __attribute__ ((aligned(4)));	 /* Working buffer */
+
 char song_list[20][20];
 uint64_t song_sizes[20];
 uint16_t song_count = 0;
 uint16_t curr_index = 0;
 enum MODE_LIST{PLAYING, PAUSED, STOPPED};
-volatile uint8_t STATE = STOPPED;
+volatile uint8_t MODE = STOPPED;
 volatile uint8_t NEXT_SONG = 0;
 volatile uint8_t PREV_SONG = 0;
 uint64_t CURRENT_BYTE = 0;
@@ -108,40 +112,34 @@ void prev_song()
 		curr_index = song_count-1;
 }
 
-void curr_song()
-{
-	curr_index = curr_index % song_count;
-}
-
-
 // Button interrupt handler
 static void handle_button_interrupts(void* context, uint32_t id)
 {
 	switch(IORD(BUTTON_PIO_BASE, 0)) {
-	case 0xe:	// 1110
-		next_song();
-		update_lcd();
-		NEXT_SONG = 1;
-		break;
-	case 0xd:	// 1101
-		if(STATE == PAUSED || STATE == STOPPED)
-			STATE = PLAYING;
-		else
-			STATE = PAUSED;
-		update_lcd();
-		break;
-	case 0xb:	// 1011
-		STATE = STOPPED;
-		break;
-	case 0x7:	// 0111
-		prev_song();
-		update_lcd();
-		PREV_SONG = 1;
-		if (STATE == PLAYING)
-			STATE = PLAYING;
-		else
-			STATE = STOPPED;
-		break;
+		case 0xe:	// 1110
+			next_song();
+			update_lcd();
+			NEXT_SONG = 1;
+			break;
+		case 0xd:	// 1101
+			if(MODE == PAUSED || MODE == STOPPED)
+				MODE = PLAYING;
+			else
+				MODE = PAUSED;
+			update_lcd();
+			break;
+		case 0xb:	// 1011
+			MODE = STOPPED;
+			break;
+		case 0x7:	// 0111
+			prev_song();
+			update_lcd();
+			PREV_SONG = 1;
+			if (MODE == PLAYING)
+				MODE = PLAYING;
+			else
+				MODE = STOPPED;
+			break;
 	}
 
 	// Debounce
@@ -188,7 +186,7 @@ int isWav(char *filename)
 void play_file()
 {
     int fifospace;
-    int input;
+    int i;
     int p1;
     int buffer_size;
     int res;
@@ -218,7 +216,7 @@ void play_file()
     	    PREV_SONG = 0;
     	}
 
-    	if(STATE == PLAYING) {
+    	if(MODE == PLAYING) {
 
 			buffer_size = 256;
 			fifospace = alt_up_audio_write_fifo_space(audio_dev, ALT_UP_AUDIO_RIGHT) * 4;
@@ -229,10 +227,10 @@ void play_file()
 
 			if(res != FR_OK) break;
 
-			for(input = 0; input < buffer_size; input += step)
+			for(i = 0; i < buffer_size; i += step)
 			{
-				l_buf = Buff[input] | (Buff[input+1] << 8);
-				r_buf = Buff[input+2] | (Buff[input+3] << 8);
+				l_buf = Buff[i] | (Buff[i+1] << 8);
+				r_buf = Buff[i+2] | (Buff[i+3] << 8);
 				alt_up_audio_write_fifo(audio_dev, &(l_buf), 1, ALT_UP_AUDIO_LEFT);
 				if (normal_mono)
 					alt_up_audio_write_fifo(audio_dev, &(l_buf), 1, ALT_UP_AUDIO_RIGHT);
@@ -240,17 +238,16 @@ void play_file()
 					alt_up_audio_write_fifo(audio_dev, &(r_buf), 1, ALT_UP_AUDIO_RIGHT);
 			}
 			p1 -= buffer_size;
-    	} else if(STATE == STOPPED) {
+    	} else if(MODE == STOPPED) {
     		break;
     	}
     }
-    if(STATE == PLAYING) {
-    	curr_song();
-    	STATE = STOPPED;
+    // stay in current track
+    if(MODE == PLAYING) {
+    	MODE = STOPPED;
     }
 }
 
-// Indexes songs and populates arrays and counter
 void song_index()
 {
 	int res;
@@ -271,18 +268,17 @@ void song_index()
 			i++;
 		}
 	}
-
 	song_count = i;
 }
 
 void update_lcd()
 {
 	char *tmp;
-	if (STATE == 0)
+	if (MODE == 0)
 		tmp = "PLAY";
-	else if (STATE == 1)
+	else if (MODE == 1)
 		tmp = "PAUSE";
-	else if (STATE == 2)
+	else if (MODE == 2)
 		tmp = "STOP";
 	fprintf(disp, "#%d %s\n", curr_index+1, song_list[curr_index]);
 	fprintf(disp, "%s\n", tmp);
@@ -295,22 +291,22 @@ int main()
 	init_button_pio();
 
 	song_index();
-	open_file(song_list[curr_index], 1);
+	open_file(song_list[curr_index], 1);	// first track
 
-	// Enter state machine
+	// loop forever
 	while(1) {
-		switch (STATE) {
-		case 0: // Playing track
+		switch (MODE) {
+		case 0: // play
 			update_lcd();
 			play_file();
 			break;
-		case 1: // Paused track
+		case 1: // pause
 			update_lcd();
-			while(STATE == 1);
+			while(MODE == 1);
 			break;
-		case 2: // Stopped track
+		case 2: // stop
 			update_lcd();
-			while(STATE == 2);
+			while(MODE == 2);
 			break;
 		}
 	}
@@ -320,7 +316,6 @@ int main()
 
 
 ////////////////////////
-
 static void put_rc(FRESULT rc)
 {
     const char *str =
