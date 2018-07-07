@@ -31,8 +31,8 @@ uint16_t song_count = 0;
 uint16_t curr_index = 0;
 enum MODE_LIST{PLAYING, PAUSED, STOPPED};
 volatile uint8_t STATE = STOPPED;
-volatile uint8_t NEXT_TRACK = 0;
-volatile uint8_t PREV_TRACK = 0;
+volatile uint8_t NEXT_SONG = 0;
+volatile uint8_t PREV_SONG = 0;
 uint64_t CURRENT_BYTE = 0;
 
 ////////////////////////////////////////////////////////////////
@@ -96,19 +96,19 @@ void init_display()
 }
 
 // Logic to increment track index
-void next_track()
+void next_song()
 {
 	curr_index = (curr_index + 1) % song_count;
 }
 
-void prev_track()
+void prev_song()
 {
 	curr_index--;
 	if(curr_index < 0 || curr_index >=65535)
 		curr_index = song_count-1;
 }
 
-void curr_track()
+void curr_song()
 {
 	curr_index = curr_index % song_count;
 }
@@ -118,25 +118,25 @@ void curr_track()
 static void handle_button_interrupts(void* context, uint32_t id)
 {
 	switch(IORD(BUTTON_PIO_BASE, 0)) {
-	case 0xe:
-		next_track();
+	case 0xe:	// 1110
+		next_song();
 		update_lcd();
-		NEXT_TRACK = 1;
+		NEXT_SONG = 1;
 		break;
-	case 0xd:
+	case 0xd:	// 1101
 		if(STATE == PAUSED || STATE == STOPPED)
 			STATE = PLAYING;
 		else
 			STATE = PAUSED;
 		update_lcd();
 		break;
-	case 0xb:
+	case 0xb:	// 1011
 		STATE = STOPPED;
 		break;
-	case 0x7:
-		prev_track();
+	case 0x7:	// 0111
+		prev_song();
 		update_lcd();
-		PREV_TRACK = 1;
+		PREV_SONG = 1;
 		if (STATE == PLAYING)
 			STATE = PLAYING;
 		else
@@ -199,23 +199,23 @@ void play_file()
 
     p1 = song_sizes[curr_index];
 
-    audio_dev = alt_up_audio_open_dev ("/dev/Audio");
+    audio_dev = alt_up_audio_open_dev ("/dev/Audio");		// re-open every time
 
     open_file(song_list[curr_index], 1);
     step = determine_mode();
 
     while (p1)
     {
-    	if(NEXT_TRACK) {
+    	if(NEXT_SONG) {
     	    p1 = song_sizes[curr_index];
     	    open_file(song_list[curr_index], 1);
-    	    NEXT_TRACK = 0;
+    	    NEXT_SONG = 0;
     	}
 
-    	if(PREV_TRACK) {
+    	if(PREV_SONG) {
     	    p1 = song_sizes[curr_index];
     	    open_file(song_list[curr_index], 1);
-    	    PREV_TRACK = 0;
+    	    PREV_SONG = 0;
     	}
 
     	if(STATE == PLAYING) {
@@ -245,7 +245,7 @@ void play_file()
     	}
     }
     if(STATE == PLAYING) {
-    	curr_track();
+    	curr_song();
     	STATE = STOPPED;
     }
 }
