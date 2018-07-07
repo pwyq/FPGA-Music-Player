@@ -40,7 +40,7 @@ int double_speed = 0;	// stereo
 int half_speed = 0;		// stereo
 int normal_speed = 0;	// stereo
 int normal_mono = 0;	// mono
-void display_info(char* status);
+void update_lcd();
 
 /////////////////////////////////
 static void put_rc(FRESULT rc);
@@ -81,7 +81,6 @@ int determine_mode(void) {
 	return 4;
 }
 
-
 void init_disk(uint8_t code)
 {
 	// Initialize disk
@@ -121,24 +120,27 @@ static void handle_button_interrupts(void* context, uint32_t id)
 	switch(IORD(BUTTON_PIO_BASE, 0)) {
 	case 0xe:
 		next_track();
-		display_info("STOP");
+		update_lcd();
 		NEXT_TRACK = 1;
 		break;
 	case 0xd:
-		if(STATE == PAUSED)
-			STATE = PLAYING;
-		else if (STATE == STOPPED)
+		if(STATE == PAUSED || STATE == STOPPED)
 			STATE = PLAYING;
 		else
 			STATE = PAUSED;
+		update_lcd();
 		break;
 	case 0xb:
 		STATE = STOPPED;
 		break;
 	case 0x7:
 		prev_track();
-		display_info("STOP");
+		update_lcd();
 		PREV_TRACK = 1;
+		if (STATE == PLAYING)
+			STATE = PLAYING;
+		else
+			STATE = STOPPED;
 		break;
 	}
 
@@ -188,7 +190,7 @@ void play_file()
     int fifospace;
     int input;
     int p1;
-    int cnt;
+    int buffer_size;
     int res;
     int step;
     unsigned int l_buf;
@@ -218,16 +220,16 @@ void play_file()
 
     	if(STATE == PLAYING) {
 
-			cnt = 256;
+			buffer_size = 256;
 			fifospace = alt_up_audio_write_fifo_space(audio_dev, ALT_UP_AUDIO_RIGHT) * 4;
 
-			if(cnt > fifospace) cnt = fifospace;
+			if(buffer_size > fifospace) buffer_size = fifospace;
 
-			res = f_read(&File1, Buff, cnt, &cnt);
+			res = f_read(&File1, Buff, buffer_size, &buffer_size);
 
 			if(res != FR_OK) break;
 
-			for(input = 0; input < cnt; input += step)
+			for(input = 0; input < buffer_size; input += step)
 			{
 				l_buf = Buff[input] | (Buff[input+1] << 8);
 				r_buf = Buff[input+2] | (Buff[input+3] << 8);
@@ -237,7 +239,7 @@ void play_file()
 				else
 					alt_up_audio_write_fifo(audio_dev, &(r_buf), 1, ALT_UP_AUDIO_RIGHT);
 			}
-			p1 -= cnt;
+			p1 -= buffer_size;
     	} else if(STATE == STOPPED) {
     		break;
     	}
@@ -273,10 +275,17 @@ void song_index()
 	song_count = i;
 }
 
-void display_info(char* status)
+void update_lcd()
 {
+	char *tmp;
+	if (STATE == 0)
+		tmp = "PLAY";
+	else if (STATE == 1)
+		tmp = "PAUSE";
+	else if (STATE == 2)
+		tmp = "STOP";
 	fprintf(disp, "#%d %s\n", curr_index+1, song_list[curr_index]);
-	fprintf(disp, "%s\n", status);
+	fprintf(disp, "%s\n", tmp);
 }
 
 int main()
@@ -292,15 +301,15 @@ int main()
 	while(1) {
 		switch (STATE) {
 		case 0: // Playing track
-			display_info("PLAY");
+			update_lcd();
 			play_file();
 			break;
 		case 1: // Paused track
-			display_info("PAUSE");
+			update_lcd();
 			while(STATE == 1);
 			break;
 		case 2: // Stopped track
-			display_info("STOP");
+			update_lcd();
 			while(STATE == 2);
 			break;
 		}
