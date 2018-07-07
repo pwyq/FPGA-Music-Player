@@ -21,7 +21,12 @@
 #include <altera_up_avalon_audio.h>
 #include <altera_up_avalon_audio_and_video_config.h>
 
-#include "altera_avalon_pio_regs.h"
+#include <altera_avalon_timer.h>
+#include <altera_avalon_timer_regs.h>
+
+/*=========================================================================*/
+/*  Global Variables                                                       */
+/*=========================================================================*/
 FILINFO Finfo;
 FATFS Fatfs[_VOLUMES];			/* File system object for each logical drive */
 FIL File1;						/* File objects */
@@ -39,17 +44,21 @@ volatile uint8_t NEXT_SONG = 0;
 volatile uint8_t PREV_SONG = 0;
 uint64_t CURRENT_BYTE = 0;
 
-////////////////////////////////////////////////////////////////
 int double_speed = 0;	// stereo
 int half_speed = 0;		// stereo
 int normal_speed = 0;	// stereo
 int normal_mono = 0;	// mono
-void update_lcd();
+int debounce_flag = 0;
 
-/////////////////////////////////
+/*=========================================================================*/
+/*  Signatures                                                             */
+/*=========================================================================*/
+void update_lcd();
 static void put_rc(FRESULT rc);
 
-////////////////////////////////////////////////////////////////
+/*=========================================================================*/
+/*  FUNCTIONS                                                              */
+/*=========================================================================*/
 int determine_mode(void) {
 	int status = -1;
 	// reset
@@ -99,7 +108,6 @@ void init_display()
 	disp = fopen("/dev/lcd_display", "w");
 }
 
-// Logic to increment track index
 void next_song()
 {
 	curr_index = (curr_index + 1) % song_count;
@@ -115,35 +123,44 @@ void prev_song()
 // Button interrupt handler
 static void handle_button_interrupts(void* context, uint32_t id)
 {
-	switch(IORD(BUTTON_PIO_BASE, 0)) {
-		case 0xe:	// 1110
-			next_song();
-			update_lcd();
-			NEXT_SONG = 1;
-			break;
-		case 0xd:	// 1101
-			if(MODE == PAUSED || MODE == STOPPED)
-				MODE = PLAYING;
-			else
-				MODE = PAUSED;
-			update_lcd();
-			break;
-		case 0xb:	// 1011
-			MODE = STOPPED;
-			break;
-		case 0x7:	// 0111
-			prev_song();
-			update_lcd();
-			PREV_SONG = 1;
-			if (MODE == PLAYING)
-				MODE = PLAYING;
-			else
+	if (debounce_flag) {
+		int tmp;
+		tmp = determine_mode();
+		switch(IORD(BUTTON_PIO_BASE, 0)) {
+			case 0xe:	// 1110
+				next_song();
+				NEXT_SONG = 1;
+				if (MODE == PLAYING)
+					MODE = PLAYING;
+				else
+					MODE = STOPPED;
+				update_lcd();
+				break;
+			case 0xd:	// 1101
+				if(MODE == PAUSED || MODE == STOPPED)
+					MODE = PLAYING;
+				else
+					MODE = PAUSED;
+				update_lcd();
+				break;
+			case 0xb:	// 1011
 				MODE = STOPPED;
-			break;
+				update_lcd();
+				break;
+			case 0x7:	// 0111
+				prev_song();
+				PREV_SONG = 1;
+				if (MODE == PLAYING)
+					MODE = PLAYING;
+				else
+					MODE = STOPPED;
+				update_lcd();
+				break;
+		}
+		debounce_flag = 0;
+//		IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, 0x4);	// stop
+//		IOWR_ALTERA_AVALON_TIMER_STATUS(SYSTEM_TIMER_BASE, 0x0);	// time out
 	}
-
-	// Debounce
-	while(IORD(BUTTON_PIO_BASE, 0) != 0xf) usleep(10000);
 
 	IOWR(BUTTON_PIO_BASE, 3, 0x0);
 }
@@ -155,10 +172,32 @@ void init_button_pio()
 	IOWR(BUTTON_PIO_BASE, 2, 0xF);
 }
 
+static void timer_ISR(void* context, alt_u32 id) {
+	IOWR(SYSTEM_TIMER_BASE, 0, 0x0);	// clear TO
+	debounce_flag = 1;
+//	xprintf("end timer isr.\n");
+}
+
+void init_timer() {
+	// register timer
+	alt_irq_register(SYSTEM_TIMER_IRQ, (void*)0, timer_ISR);
+
+	// clear IRQ status
+	IOWR_ALTERA_AVALON_TIMER_STATUS(SYSTEM_TIMER_BASE, 0x0);
+	// set period
+	IOWR_ALTERA_AVALON_TIMER_PERIODL(SYSTEM_TIMER_BASE, 0xFF);
+	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0xF8);
+
+	//start timer
+	IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, ALTERA_AVALON_TIMER_CONTROL_START_MSK|
+			ALTERA_AVALON_TIMER_CONTROL_ITO_MSK|
+			ALTERA_AVALON_TIMER_CONTROL_CONT_MSK);	// turn on START, CONT, ITO
+}
+
 // Open a file by name
 void open_file(char *filename, uint8_t mode)
 {
-	f_open(&File1, filename, mode);
+	f_open(&File1, filename, mode);	// mode is always 1
 }
 
 // Return 1 if a filename is a wav file
@@ -187,7 +226,7 @@ void play_file()
 {
     int fifospace;
     int i;
-    int p1;
+    int song_size;
     int buffer_size;
     int res;
     int step;
@@ -195,34 +234,29 @@ void play_file()
     unsigned int r_buf;
     alt_up_audio_dev * audio_dev;
 
-    p1 = song_sizes[curr_index];
+    song_size = song_sizes[curr_index];
 
     audio_dev = alt_up_audio_open_dev ("/dev/Audio");		// re-open every time
 
     open_file(song_list[curr_index], 1);
     step = determine_mode();
 
-    while (p1)
+    while (song_size)
     {
     	if(NEXT_SONG) {
-    	    p1 = song_sizes[curr_index];
+    	    song_size = song_sizes[curr_index];
     	    open_file(song_list[curr_index], 1);
     	    NEXT_SONG = 0;
     	}
 
     	if(PREV_SONG) {
-    	    p1 = song_sizes[curr_index];
+    	    song_size = song_sizes[curr_index];
     	    open_file(song_list[curr_index], 1);
     	    PREV_SONG = 0;
     	}
 
     	if(MODE == PLAYING) {
-
 			buffer_size = 256;
-			fifospace = alt_up_audio_write_fifo_space(audio_dev, ALT_UP_AUDIO_RIGHT) * 4;
-
-			if(buffer_size > fifospace) buffer_size = fifospace;
-
 			res = f_read(&File1, Buff, buffer_size, &buffer_size);
 
 			if(res != FR_OK) {
@@ -243,13 +277,17 @@ void play_file()
             	r_buf = r_buf | Buff[i+3];
             	r_buf = r_buf << 8;
             	r_buf = r_buf | Buff[i+2];
+            	while (alt_up_audio_write_fifo_space(audio_dev, ALT_UP_AUDIO_RIGHT) < 1);	// while there is no fifospace, we wait
 				alt_up_audio_write_fifo(audio_dev, &(l_buf), 1, ALT_UP_AUDIO_LEFT);
 				if (normal_mono)
 					alt_up_audio_write_fifo(audio_dev, &(l_buf), 1, ALT_UP_AUDIO_RIGHT);
 				else
 					alt_up_audio_write_fifo(audio_dev, &(r_buf), 1, ALT_UP_AUDIO_RIGHT);
 			}
-			p1 -= buffer_size;
+			if (song_size >= buffer_size)
+				song_size -= buffer_size;
+			else
+				song_size = 0;
     	} else if(MODE == STOPPED) {
     		break;
     	}
@@ -286,21 +324,37 @@ void song_index()
 void update_lcd()
 {
 	char *tmp;
-	if (MODE == 0)
-		tmp = "PLAY";
+	if (MODE == 0) {
+		if (double_speed) {
+			tmp = "PLAY-DBL SPD";
+		}
+		else if (half_speed) {
+			tmp = "PLAY-HALF SPD";
+		}
+		else if (normal_speed) {
+			tmp = "PLAY-NORM SPD";
+		}
+		else if (normal_mono) {
+			tmp = "PLAY-MONO-L";
+		}
+	}
 	else if (MODE == 1)
-		tmp = "PAUSE";
+		tmp = "PAUSED";
 	else if (MODE == 2)
-		tmp = "STOP";
+		tmp = "STOPPED";
 	fprintf(disp, "#%d %s\n", curr_index+1, song_list[curr_index]);
 	fprintf(disp, "%s\n", tmp);
 }
 
+/*=========================================================================*/
+/*  MAIN                                                                   */
+/*=========================================================================*/
 int main()
 {
 	init_disk(0);
 	init_display();
 	init_button_pio();
+	init_timer();
 
 	song_index();
 	open_file(song_list[curr_index], 1);	// first track
@@ -326,7 +380,9 @@ int main()
 	return 0;
 }
 
-////////////////////////
+/*=========================================================================*/
+/*  HELPER FUNCTIONS                                                       */
+/*=========================================================================*/
 static void put_rc(FRESULT rc)
 {
     const char *str =
