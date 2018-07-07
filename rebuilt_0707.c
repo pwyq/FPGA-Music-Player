@@ -225,12 +225,24 @@ void play_file()
 
 			res = f_read(&File1, Buff, buffer_size, &buffer_size);
 
-			if(res != FR_OK) break;
+			if(res != FR_OK) {
+				put_rc(res);
+				break;
+			}
 
 			for(i = 0; i < buffer_size; i += step)
 			{
-				l_buf = Buff[i] | (Buff[i+1] << 8);
-				r_buf = Buff[i+2] | (Buff[i+3] << 8);
+            	// take the first two bytes
+            	l_buf = 0;			// clear
+            	l_buf = l_buf | Buff[i+1];
+            	l_buf = l_buf << 8;
+            	l_buf = l_buf | Buff[i+0];
+
+            	// take the next two bytes
+            	r_buf = 0;
+            	r_buf = r_buf | Buff[i+3];
+            	r_buf = r_buf << 8;
+            	r_buf = r_buf | Buff[i+2];
 				alt_up_audio_write_fifo(audio_dev, &(l_buf), 1, ALT_UP_AUDIO_LEFT);
 				if (normal_mono)
 					alt_up_audio_write_fifo(audio_dev, &(l_buf), 1, ALT_UP_AUDIO_RIGHT);
@@ -313,7 +325,6 @@ int main()
 
 	return 0;
 }
-
 
 ////////////////////////
 static void put_rc(FRESULT rc)
