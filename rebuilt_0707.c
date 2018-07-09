@@ -40,8 +40,7 @@ uint16_t song_count = 0;			//Variable to count total .wav files
 uint16_t curr_index = 0;
 enum MODE_LIST{PLAYING, PAUSED, STOPPED};
 volatile uint8_t MODE = STOPPED;
-volatile uint8_t NEXT_SONG = 0;		//These flags are used if the song is changed while playing
-volatile uint8_t PREV_SONG = 0;		//These flags are used if the song is changed while playing
+volatile uint8_t SONG_CHANGED = 0;		//These flags are used if the song is changed while playing
 
 volatile uint8_t double_speed = 0;	// stereo
 volatile uint8_t half_speed = 0;		// stereo
@@ -104,59 +103,51 @@ int determine_mode(void) {
 	return 4;
 }
 
-
-
 // Button interrupt handler for the music player
 static void handle_button_interrupts(void* context, uint32_t id)
 {
-	//If debounce flag is active (1), run the state machine
-	if (debounce_flag) {
-		int tmp;
-		tmp = determine_mode();
-		switch(IORD(BUTTON_PIO_BASE, 0)) {
-			case 0xe:	// 1110
-				curr_index = (curr_index + 1) % song_count;	//go to next song
-				NEXT_SONG = 1;
-				if (MODE == PLAYING)						//if already playing keep playing
-					MODE = PLAYING;
-				else
-					MODE = STOPPED;
-				update_lcd();
-				break;
-			case 0xd:	// 1101
-				if(MODE == PAUSED || MODE == STOPPED)
-					MODE = PLAYING;
-				else
-					MODE = PAUSED;
-				update_lcd();
-				break;
-			case 0xb:	// 1011
-				MODE = STOPPED;
-				break;
-			case 0x7:	// 0111
-				curr_index--;
-				if(curr_index < 0 || curr_index >=65535)
-					curr_index = song_count-1;
-				PREV_SONG = 1;
-				if (MODE == PLAYING)
-					MODE = PLAYING;
-				else
-					MODE = STOPPED;
-				update_lcd();
-				break;
-		}
-		debounce_flag = 0;
-	}
+	IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, 0x05);	// turn on START, TO bit
 
 	IOWR(BUTTON_PIO_BASE, 3, 0x0);		//clear the interrupt
 }
 
-
-
 static void timer_ISR(void* context, alt_u32 id) {
+	int tmp;
+	tmp = determine_mode();
+	switch(IORD(BUTTON_PIO_BASE, 0)) {
+		case 0xe:	// 1110
+			curr_index = (curr_index + 1) % song_count;	//go to next song
+			SONG_CHANGED = 1;
+			if (MODE == PLAYING)						//if already playing keep playing
+				MODE = PLAYING;
+			else
+				MODE = STOPPED;
+			update_lcd();
+			break;
+		case 0xd:	// 1101
+			if(MODE == PAUSED || MODE == STOPPED)
+				MODE = PLAYING;
+			else
+				MODE = PAUSED;
+			update_lcd();
+			break;
+		case 0xb:	// 1011
+			MODE = STOPPED;
+			break;
+		case 0x7:	// 0111
+			curr_index--;
+			if(curr_index < 0 || curr_index >=65535)
+				curr_index = song_count-1;
+			SONG_CHANGED = 1;
+			if (MODE == PLAYING)
+				MODE = PLAYING;
+			else
+				MODE = STOPPED;
+			update_lcd();
+			break;
+	}
 	IOWR(SYSTEM_TIMER_BASE, 0, 0x0);	// clear TO
-	debounce_flag = 1;
-//	xprintf("end timer isr.\n");
+	xprintf("end timer isr.\n");
 }
 
 void init_timer() {
@@ -168,21 +159,13 @@ void init_timer() {
 
 	// set period
 	IOWR_ALTERA_AVALON_TIMER_PERIODL(SYSTEM_TIMER_BASE, 0xDF);		 //IOWR(base, 2, data)
-	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0x10);		 //IOWR(base, 3, data)
-
-	//start timer
-	IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, ALTERA_AVALON_TIMER_CONTROL_START_MSK|
-			ALTERA_AVALON_TIMER_CONTROL_ITO_MSK|
-			ALTERA_AVALON_TIMER_CONTROL_CONT_MSK);	// turn on START(0x4), ITO(0x1), CONT
-	// turn on ITO so that timer-core generates IRQ
+	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0x30);		 //IOWR(base, 3, data)
 }
 
 void open_file(char *filename)
 {
 	f_open(&File1, filename, (uint8_t)1);	// mode is always 1
 }
-
-
 
 int isWav(char *filename)
 {
@@ -203,8 +186,6 @@ int isWav(char *filename)
 	}
 	return 0;
 }
-
-
 
 void song_index()
 {
@@ -249,16 +230,10 @@ void play_file()
 
     while (song_left)
     {
-    	if(NEXT_SONG) {
-    	    song_left = song_sizes[curr_index];
-    	    open_file(song_list[curr_index]);
-    	    NEXT_SONG = 0;
-    	}
-
-    	if(PREV_SONG) {
-    	    song_left = song_sizes[curr_index];
-    	    open_file(song_list[curr_index]);
-    	    PREV_SONG = 0;
+    	if (SONG_CHANGED) {
+			song_left = song_sizes[curr_index];
+			open_file(song_list[curr_index]);
+			SONG_CHANGED = 0;
     	}
 
     	if(MODE == PLAYING) {
@@ -303,8 +278,6 @@ void play_file()
     	MODE = STOPPED;
     }
 }
-
-
 
 void update_lcd()
 {
@@ -356,18 +329,18 @@ int main()
 	// loop forever to run the music player
 	while(1) {
 		switch (MODE) {
-		case PLAYING:
-			update_lcd();
-			play_file();
-			break;
-		case PAUSED:
-			update_lcd();
-			while(MODE == PAUSED);
-			break;
-		case STOPPED:
-			update_lcd();
-			while(MODE == STOPPED);
-			break;
+			case PLAYING:
+				update_lcd();
+				play_file();
+				break;
+			case PAUSED:
+				update_lcd();
+				while(MODE == PAUSED);
+				break;
+			case STOPPED:
+				update_lcd();
+				while(MODE == STOPPED);
+				break;
 		}
 	}
 	return 0;
@@ -390,3 +363,5 @@ static void put_rc(FRESULT rc)
     }
     xprintf("rc=%u FR_%s\n", (uint32_t) rc, str);
 }
+
+/* End of File */
