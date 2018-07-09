@@ -42,17 +42,28 @@ enum MODE_LIST{PLAYING, PAUSED, STOPPED};
 volatile uint8_t MODE = STOPPED;
 volatile uint8_t NEXT_SONG = 0;
 volatile uint8_t PREV_SONG = 0;
-uint64_t CURRENT_BYTE = 0;
 
-int double_speed = 0;	// stereo
-int half_speed = 0;		// stereo
-int normal_speed = 0;	// stereo
-int normal_mono = 0;	// mono
-int debounce_flag = 0;
+volatile uint8_t double_speed = 0;	// stereo
+volatile uint8_t half_speed = 0;		// stereo
+volatile uint8_t normal_speed = 0;	// stereo
+volatile uint8_t normal_mono = 0;	// mono
+volatile uint8_t debounce_flag = 0;
 
 /*=========================================================================*/
 /*  Signatures                                                             */
 /*=========================================================================*/
+int determine_mode(void);
+void next_song();
+void prev_song();
+static void handle_button_interrupts(void* context, uint32_t id);
+static void timer_ISR(void* context, alt_u32 id);
+void init_timer();
+void init_button_pio();
+void open_file(char *filename);
+int isWav(char *filename);
+void play_file();
+void update_lcd();
+void song_index();
 void update_lcd();
 static void put_rc(FRESULT rc);
 
@@ -94,20 +105,6 @@ int determine_mode(void) {
 	return 4;
 }
 
-void init_disk(uint8_t code)
-{
-	// Initialize disk
-	xprintf("rc=%d\n", (uint16_t) disk_initialize((uint8_t) 0));	// "di 0"
-	// Initialize file system
-	put_rc(f_mount((uint8_t) 0, &Fatfs[0]));						// "fi 0"
-}
-
-// Open the LCD display file
-void init_display()
-{
-	disp = fopen("/dev/lcd_display", "w");
-}
-
 void next_song()
 {
 	curr_index = (curr_index + 1) % song_count;
@@ -145,7 +142,6 @@ static void handle_button_interrupts(void* context, uint32_t id)
 				break;
 			case 0xb:	// 1011
 				MODE = STOPPED;
-				update_lcd();
 				break;
 			case 0x7:	// 0111
 				prev_song();
@@ -158,8 +154,6 @@ static void handle_button_interrupts(void* context, uint32_t id)
 				break;
 		}
 		debounce_flag = 0;
-//		IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, 0x4);	// stop
-//		IOWR_ALTERA_AVALON_TIMER_STATUS(SYSTEM_TIMER_BASE, 0x0);	// time out
 	}
 
 	IOWR(BUTTON_PIO_BASE, 3, 0x0);
@@ -184,23 +178,23 @@ void init_timer() {
 
 	// clear IRQ status
 	IOWR_ALTERA_AVALON_TIMER_STATUS(SYSTEM_TIMER_BASE, 0x0);
+
 	// set period
 	IOWR_ALTERA_AVALON_TIMER_PERIODL(SYSTEM_TIMER_BASE, 0xFF);
-	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0xF8);
+	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0xFF);
 
 	//start timer
 	IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, ALTERA_AVALON_TIMER_CONTROL_START_MSK|
 			ALTERA_AVALON_TIMER_CONTROL_ITO_MSK|
 			ALTERA_AVALON_TIMER_CONTROL_CONT_MSK);	// turn on START, CONT, ITO
+	// turn on ITO so that timer-core generates IRQ
 }
 
-// Open a file by name
-void open_file(char *filename, uint8_t mode)
+void open_file(char *filename)
 {
-	f_open(&File1, filename, mode);	// mode is always 1
+	f_open(&File1, filename, (uint8_t)1);	// mode is always 1
 }
 
-// Return 1 if a filename is a wav file
 int isWav(char *filename)
 {
 	int len = strlen(filename);
@@ -221,12 +215,10 @@ int isWav(char *filename)
 	return 0;
 }
 
-// Plays the currently selected file
 void play_file()
 {
-    int fifospace;
     int i;
-    int song_size;
+    int song_left;
     int buffer_size;
     int res;
     int step;
@@ -234,29 +226,29 @@ void play_file()
     unsigned int r_buf;
     alt_up_audio_dev * audio_dev;
 
-    song_size = song_sizes[curr_index];
+    song_left = song_sizes[curr_index];
 
     audio_dev = alt_up_audio_open_dev ("/dev/Audio");		// re-open every time
 
-    open_file(song_list[curr_index], 1);
+    open_file(song_list[curr_index]);
     step = determine_mode();
 
-    while (song_size)
+    while (song_left)
     {
     	if(NEXT_SONG) {
-    	    song_size = song_sizes[curr_index];
-    	    open_file(song_list[curr_index], 1);
+    	    song_left = song_sizes[curr_index];
+    	    open_file(song_list[curr_index]);
     	    NEXT_SONG = 0;
     	}
 
     	if(PREV_SONG) {
-    	    song_size = song_sizes[curr_index];
-    	    open_file(song_list[curr_index], 1);
+    	    song_left = song_sizes[curr_index];
+    	    open_file(song_list[curr_index]);
     	    PREV_SONG = 0;
     	}
 
     	if(MODE == PLAYING) {
-			buffer_size = 256;
+			buffer_size = 1024;
 			res = f_read(&File1, Buff, buffer_size, &buffer_size);
 
 			if(res != FR_OK) {
@@ -284,10 +276,10 @@ void play_file()
 				else
 					alt_up_audio_write_fifo(audio_dev, &(r_buf), 1, ALT_UP_AUDIO_RIGHT);
 			}
-			if (song_size >= buffer_size)
-				song_size -= buffer_size;
+			if (song_left >= buffer_size)
+				song_left -= buffer_size;
 			else
-				song_size = 0;
+				song_left = 0;
     	} else if(MODE == STOPPED) {
     		break;
     	}
@@ -351,32 +343,35 @@ void update_lcd()
 /*=========================================================================*/
 int main()
 {
-	init_disk(0);
-	init_display();
+	// Initialize disk
+	xprintf("rc=%d\n", (uint16_t) disk_initialize((uint8_t) 0));	// "di 0"
+	// Initialize file system
+	put_rc(f_mount((uint8_t) 0, &Fatfs[0]));						// "fi 0"
+	// Init LCD
+	disp = fopen("/dev/lcd_display", "w");
 	init_button_pio();
 	init_timer();
 
-	song_index();
-	open_file(song_list[curr_index], 1);	// first track
+	song_index();						// get all song index
+	open_file(song_list[curr_index]);	// first track
 
 	// loop forever
 	while(1) {
 		switch (MODE) {
-		case 0: // play
+		case PLAYING:
 			update_lcd();
 			play_file();
 			break;
-		case 1: // pause
+		case PAUSED:
 			update_lcd();
-			while(MODE == 1);
+			while(MODE == PAUSED);
 			break;
-		case 2: // stop
+		case STOPPED:
 			update_lcd();
-			while(MODE == 2);
+			while(MODE == STOPPED);
 			break;
 		}
 	}
-
 	return 0;
 }
 
