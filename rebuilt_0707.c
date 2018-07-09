@@ -28,25 +28,24 @@
 /*  Global Variables                                                       */
 /*=========================================================================*/
 FILINFO Finfo;
-FATFS Fatfs[_VOLUMES];			/* File system object for each logical drive */
-FIL File1;						/* File objects */
+FATFS Fatfs[_VOLUMES];                               /* File system object for each logical drive */
+FIL File1;                                           /* File objects */
 FILE *disp;
-DIR Dir;						/* Directory object */
-uint8_t Buff[8192] __attribute__ ((aligned(4)));	 /* Working buffer */
+DIR Dir;                                             /* Directory object */
+uint8_t Buff[8192] __attribute__ ((aligned(4)));     /* Working buffer */
 
-char song_list[20][20];				//This 2-D array stores the song index and name
-uint64_t song_sizes[20];			//This array stores the size of each file
-uint16_t song_count = 0;			//Variable to count total .wav files
-uint16_t curr_index = 0;
+char song_list[20][20];                  // This 2-D array stores the song index and name
+uint64_t song_sizes[20];                 // This array stores the size of each file
+uint16_t song_count = 0;                 // Variable to count total .wav files
+uint16_t curr_index = 0;                 // Current song index
 enum MODE_LIST{PLAYING, PAUSED, STOPPED};
 volatile uint8_t MODE = STOPPED;
-volatile uint8_t SONG_CHANGED = 0;		//These flags are used if the song is changed while playing
+volatile uint8_t SONG_CHANGED = 0;       // The flag is used if the song is changed while playing
 
-volatile uint8_t double_speed = 0;	// stereo
-volatile uint8_t half_speed = 0;		// stereo
-volatile uint8_t normal_speed = 0;	// stereo
-volatile uint8_t normal_mono = 0;	// mono
-volatile uint8_t debounce_flag = 0;
+volatile uint8_t double_speed = 0;       // stereo
+volatile uint8_t half_speed = 0;         // stereo
+volatile uint8_t normal_speed = 0;       // stereo
+volatile uint8_t normal_mono = 0;        // mono
 
 /*=========================================================================*/
 /*  Signatures                                                             */
@@ -106,9 +105,9 @@ int determine_mode(void) {
 // Button interrupt handler for the music player
 static void handle_button_interrupts(void* context, uint32_t id)
 {
-	IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, 0x05);	// turn on START, TO bit
+	IOWR_ALTERA_AVALON_TIMER_CONTROL(SYSTEM_TIMER_BASE, 0x05);  // turn on the timer START, TO bit
 
-	IOWR(BUTTON_PIO_BASE, 3, 0x0);		//clear the interrupt
+	IOWR(BUTTON_PIO_BASE, 3, 0x0);                              // clear the button interrupt
 }
 
 static void timer_ISR(void* context, alt_u32 id) {
@@ -116,9 +115,9 @@ static void timer_ISR(void* context, alt_u32 id) {
 	tmp = determine_mode();
 	switch(IORD(BUTTON_PIO_BASE, 0)) {
 		case 0xe:	// 1110
-			curr_index = (curr_index + 1) % song_count;	//go to next song
+			curr_index = (curr_index + 1) % song_count; // go to next song
 			SONG_CHANGED = 1;
-			if (MODE == PLAYING)						//if already playing keep playing
+			if (MODE == PLAYING)                        // if already playing keep playing
 				MODE = PLAYING;
 			else
 				MODE = STOPPED;
@@ -146,7 +145,7 @@ static void timer_ISR(void* context, alt_u32 id) {
 			update_lcd();
 			break;
 	}
-	IOWR(SYSTEM_TIMER_BASE, 0, 0x0);	// clear TO
+	IOWR(SYSTEM_TIMER_BASE, 0, 0x0);                    // clear TO
 	xprintf("end timer isr.\n");
 }
 
@@ -158,13 +157,12 @@ void init_timer() {
 	IOWR_ALTERA_AVALON_TIMER_STATUS(SYSTEM_TIMER_BASE, 0x0);
 
 	// set period
-	IOWR_ALTERA_AVALON_TIMER_PERIODL(SYSTEM_TIMER_BASE, 0xDF);		 //IOWR(base, 2, data)
-	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0x30);		 //IOWR(base, 3, data)
+	IOWR_ALTERA_AVALON_TIMER_PERIODL(SYSTEM_TIMER_BASE, 0xDF);    //IOWR(base, 2, data)
+	IOWR_ALTERA_AVALON_TIMER_PERIODH(SYSTEM_TIMER_BASE, 0x30);    //IOWR(base, 3, data)
 }
 
-void open_file(char *filename)
-{
-	f_open(&File1, filename, (uint8_t)1);	// mode is always 1
+void open_file(char *filename) {
+	f_open(&File1, filename, (uint8_t)1);               // mode is always 1
 }
 
 int isWav(char *filename)
@@ -187,8 +185,7 @@ int isWav(char *filename)
 	return 0;
 }
 
-void song_index()
-{
+void song_index() {
 	int res;
 	int index = 0;
 
@@ -210,8 +207,7 @@ void song_index()
 	song_count = index;
 }
 
-void play_file()
-{
+void play_file() {
     int i;
     int song_left;
     int buffer_size;
@@ -310,9 +306,9 @@ void update_lcd()
 int main()
 {
 	// Initialize disk
-	xprintf("rc=%d\n", (uint16_t) disk_initialize((uint8_t) 0));	// "di 0"
+	xprintf("rc=%d\n", (uint16_t) disk_initialize((uint8_t) 0));    // "di 0"
 	// Initialize file system
-	put_rc(f_mount((uint8_t) 0, &Fatfs[0]));						// "fi 0"
+	put_rc(f_mount((uint8_t) 0, &Fatfs[0]));                        // "fi 0"
 	// Initialize LCD
 	disp = fopen("/dev/lcd_display", "w");
 
@@ -323,8 +319,8 @@ int main()
 	//Initialize the timer interrupt, and start the timer for debouncing purposes
 	init_timer();
 
-	song_index();						// get all song index
-	open_file(song_list[curr_index]);	// first track
+	song_index();                       // get all song index
+	open_file(song_list[curr_index]);   // first song
 
 	// loop forever to run the music player
 	while(1) {
