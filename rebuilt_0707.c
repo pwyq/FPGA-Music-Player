@@ -309,7 +309,6 @@ void update_lcd()
 /*=========================================================================*/
 int main()
 {
-    int i;
     // Initialize disk
     xprintf("rc=%d\n", (uint16_t) disk_initialize((uint8_t) 0));    // "di 0"
     // Initialize file system
