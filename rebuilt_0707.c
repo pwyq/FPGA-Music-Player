@@ -111,11 +111,13 @@ static void handle_button_interrupts(void* context, uint32_t id)
 }
 
 static void timer_ISR(void* context, alt_u32 id) {
-    int tmp;
+    uint8_t tmp;
     tmp = determine_mode();
     switch(IORD(BUTTON_PIO_BASE, 0)) {
         case 0xe:   // 1110
-            curr_index = (curr_index + 1) % song_count; // go to next song
+            do {
+                curr_index = (curr_index + 1) % song_count;
+            } while(!isWav(song_list[curr_index]));
             SONG_CHANGED = 1;
             if (MODE == PLAYING)                        // if already playing keep playing
                 MODE = PLAYING;
@@ -134,9 +136,11 @@ static void timer_ISR(void* context, alt_u32 id) {
             MODE = STOPPED;
             break;
         case 0x7:   // 0111
-            curr_index--;
-            if(curr_index < 0 || curr_index >=65535)
-                curr_index = song_count-1;
+            do {
+                curr_index--;
+                if(curr_index < 0 || curr_index >=65535)
+                    curr_index = song_count-1;
+            } while(!isWav(song_list[curr_index]));
             SONG_CHANGED = 1;
             if (MODE == PLAYING)
                 MODE = PLAYING;
@@ -198,7 +202,7 @@ void song_index() {
         res = f_readdir(&Dir, &Finfo);
         if ((res != FR_OK) || !Finfo.fname[0]) break;
 
-        if(isWav(Finfo.fname)) {
+        if(Finfo.fname) {
             strcpy(song_list[index], Finfo.fname);
             song_sizes[index] = Finfo.fsize;
             index++;
@@ -320,6 +324,9 @@ int main()
     init_timer();
 
     song_index();                       // get all song index
+    do {
+        curr_index++;
+    } while(!isWav(song_list[curr_index]))
     open_file(song_list[curr_index]);   // first song
 
     // loop forever to run the music player
